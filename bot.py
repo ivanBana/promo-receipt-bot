@@ -1,15 +1,18 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.filters import Command, StateFilter
+from aiogram.types import (Message, ReplyKeyboardMarkup, KeyboardButton, 
+                           ReplyKeyboardRemove, InlineKeyboardMarkup, 
+                           InlineKeyboardButton, CallbackQuery) # <--- НОВОЕ
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- НАСТРОЙКИ ---
-# Вставь сюда токен бота
-BOT_TOKEN = "ТВОЙ_ТОКЕН_ЗДЕСЬ"
+
+BOT_TOKEN = "ТОКЕН_ЗДЕСЬ"
+ADMIN_ID = "ID через @userinfobot здесь"
 
 # Включаем логирование, чтобы видеть ошибки в консоли
 logging.basicConfig(level=logging.INFO)
@@ -139,6 +142,74 @@ async def process_email(message: Message, state: FSMContext):
     
     await state.clear()
 
+# --- АДМИН-ПАНЕЛЬ ---
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    """Вход в админку (только для админа)"""
+    if message.from_user.id != ADMIN_ID:
+        return # Игнорируем чужаков
+    
+    # Считаем статистику из нашей "БД"
+    total_checks = len(db.checks)
+    ok_checks = len([c for c in db.checks if c['status'] == 'ok'])
+    new_checks = len([c for c in db.checks if c['status'] == 'new'])
+    
+    text = (
+        f"👨‍💻 **Панель Администратора**\n\n"
+        f"📊 **Статистика:**\n"
+        f"Всего заявок: {total_checks}\n"
+        f"Ожидают: {new_checks}\n"
+        f"Одобрено: {ok_checks}"
+    )
+    
+    # Инлайн-кнопки управления
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить статистику", callback_data="admin_refresh")],
+        [InlineKeyboardButton(text="✅ Одобрить случайный чек", callback_data="admin_approve_random")]
+    ])
+    
+    await message.answer(text, reply_markup=kb)
+
+@dp.callback_query(F.data == "admin_refresh")
+async def cb_refresh(callback: CallbackQuery):
+    """Кнопка обновления статистики"""
+    if callback.from_user.id != ADMIN_ID: return
+    
+    # Пересчитываем (копипаст логики выше)
+    total = len(db.checks)
+    new = len([c for c in db.checks if c['status'] == 'new'])
+    
+    await callback.message.edit_text(
+        f"👨‍💻 **Панель Администратора**\n"
+        f"🕒 Обновлено: {datetime.now().strftime('%H:%M:%S')}\n\n"
+        f"📊 Всего: {total} | Ждут: {new}",
+        reply_markup=callback.message.reply_markup
+    )
+    await callback.answer("Статистика обновлена")
+
+@dp.callback_query(F.data == "admin_approve_random")
+async def cb_approve(callback: CallbackQuery):
+    """Симуляция: Админ нажал 'ОК' в таблице"""
+    if callback.from_user.id != ADMIN_ID: return
+    
+    # Ищем заявку со статусом 'new'
+    pending = [c for c in db.checks if c['status'] == 'new']
+    
+    if not pending:
+        await callback.answer("Нет заявок для одобрения!", show_alert=True)
+        return
+    
+    # Берем первую попавшуюся и одобряем
+    target_check = pending[0]
+    target_check['status'] = 'ok'
+    
+    await callback.message.answer(
+        f"✅ Заявка ID {target_check['id']} одобрена вручную!\n"
+        f"Воркер скоро выдаст купон юзеру {target_check['user_id']}."
+    )
+    await callback.answer()
+    
 # --- ЗАПУСК ---
 async def main():
     print("Бот запущен...")
